@@ -1,64 +1,100 @@
-// Find all our documentation at https://docs.near.org
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{log, near_bindgen};
+use near_sdk::collections::{LookupMap, UnorderedMap};
+use near_sdk::{near_bindgen, AccountId, env, Balance, PanicOnDefault};
+mod user;
+mod data_object;
+use user::{User, UserMetaData};
+use data_object::{DataKey, DataObject, AccessType};
 
-// Define the default message
-const DEFAULT_MESSAGE: &str = "Hello";
-
-// Define the contract structure
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(PanicOnDefault,BorshDeserialize, BorshSerialize)]
 pub struct Contract {
-    message: String,
+    platform_name: AccountId,
+    user_by_id: LookupMap<AccountId, User>,
+    data_objects: UnorderedMap<u32, DataObject>,
+    data_by_id: LookupMap<DataKey, DataObject>,
+    contributor_by_data: LookupMap<DataKey, Vec<User>>,
+    total_users: u32,
+    total_data_object: u32,
 }
 
-// Define the default, which automatically initializes the contract
-impl Default for Contract{
-    fn default() -> Self{
-        Self{message: DEFAULT_MESSAGE.to_string()}
-    }
+pub trait Function {
+    fn new() -> Self;
+    fn get_signer_account(&mut self)-> User;
+    fn check_new_user(&self, id: AccountId)-> bool;
+    fn new_user(&mut self) ->User;
+    fn get_user_by_id(&self, id: AccountId) -> User;
+    fn new_data_object(&mut self, title: String,description: String, data_key: DataKey, owner: AccountId, price: Balance, access_type: AccessType) -> DataObject;
 }
-
-// Implement the contract structure
 #[near_bindgen]
-impl Contract {
-    // Public method - returns the greeting saved, defaulting to DEFAULT_MESSAGE
-    pub fn get_greeting(&self) -> String {
-        return self.message.clone();
+impl Function for Contract {
+    #[init]
+    fn new() -> Self {
+        Self {
+            platform_name: env::signer_account_id(),
+            user_by_id: LookupMap::new(b"user by id".try_to_vec().unwrap()),
+            data_objects: UnorderedMap::new(b"data objects".try_to_vec().unwrap()),
+            data_by_id: LookupMap::new(b"data by id".try_to_vec().unwrap()),
+            contributor_by_data: LookupMap::new(b"contributor".try_to_vec().unwrap()),
+            total_users: 0,
+            total_data_object: 0
+        }
     }
 
-    // Public method - accepts a greeting, such as "howdy", and records it
-    pub fn set_greeting(&mut self, message: String) {
-        log!("Saving greeting {}", message);
-        self.message = message;
+    fn get_signer_account(&mut self)-> User {  //load account 
+        let id: AccountId = env::signer_account_id();
+        assert!(self.user_by_id.contains_key(&id));
+        let mut user = self.user_by_id.get(&id).unwrap();
+        let balance = user.balance/u32::pow(10,24) as u128;
+        user.balance = balance;
+        user
     }
+
+
+    fn check_new_user(&self, id: AccountId)-> bool {
+        self.user_by_id.contains_key(&id)
+    }
+
+    fn new_user(&mut self) ->User{ 
+        let id = env::signer_account_id();
+        let user = User {
+            id: id.clone(),
+            balance: env::account_balance(),
+            meta_data: UserMetaData {
+                name: "".to_string(),
+                email_address: "".to_string(),
+                git: "".to_string(),
+                age: 0,
+                location: "".to_string()
+            }, 
+        };
+        let total_users = self.total_users +1;
+        self.total_users = total_users;
+        self.user_by_id.insert(&id, &user);
+        user
+    }
+
+    fn get_user_by_id(&self, id: AccountId) -> User {
+        let user = self.user_by_id.get(&id).unwrap();
+        user.clone()
+    }
+
+
+    //======================DATA===============
+    fn new_data_object(&mut self, title: String,description: String, data_key: DataKey, owner: AccountId, price: Balance, access_type: AccessType) -> DataObject {
+        assert!(!self.data_by_id.contains_key(&data_key), "Key of data is already exist!");
+        let new_data_obj = DataObject{
+            data_key: data_key.clone(),
+            title,
+            description,
+            owner,
+            price,
+            access_type,
+        };
+        self.data_objects.insert(&self.total_data_object, &new_data_obj);
+        self.data_by_id.insert(&data_key, &new_data_obj);
+        new_data_obj
+    }
+
 }
 
-/*
- * The rest of this file holds the inline tests for the code above
- * Learn more about Rust tests: https://doc.rust-lang.org/book/ch11-01-writing-tests.html
- */
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn get_default_greeting() {
-        let contract = Contract::default();
-        // this test did not call set_greeting so should return the default "Hello" greeting
-        assert_eq!(
-            contract.get_greeting(),
-            "Hello".to_string()
-        );
-    }
-
-    #[test]
-    fn set_then_get_greeting() {
-        let mut contract = Contract::default();
-        contract.set_greeting("howdy".to_string());
-        assert_eq!(
-            contract.get_greeting(),
-            "howdy".to_string()
-        );
-    }
-}
