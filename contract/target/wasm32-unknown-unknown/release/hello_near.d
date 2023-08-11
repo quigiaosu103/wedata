@@ -1,1 +1,0 @@
-/root/WeData/wedata/contract/target/wasm32-unknown-unknown/release/hello_near.wasm: /root/WeData/wedata/contract/src/data_object.rs /root/WeData/wedata/contract/src/lib.rs /root/WeData/wedata/contract/src/user.rs

@@ -1,0 +1,13 @@
+prefix=/root/WeData/wedata/integration-tests/target/debug/build/libz-sys-dcfc48d8bc7d77dd/out
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+sharedlibdir=@sharedlibdir@
+includedir=@includedir@
+
+Name: zlib
+Description: zlib compression library
+Version: @VERSION@
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}

@@ -1,0 +1,5 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./contract/src/nft-contract/Cargo.toml"
+    ]
+}
