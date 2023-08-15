@@ -6,8 +6,13 @@ use near_sdk::borsh::{self, BorshDeserialize};
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 
+pub enum State {
+    Private,
+    Public
+}
+
 pub struct Metadata {
-    pub state: bool,
+    pub state: State,
     pub title: String,
     pub tags: String,
     pub createby: AccountId,
@@ -24,10 +29,30 @@ pub struct Contract {
     data_by_id: LookupMap<CID,Metadata>,
     access_by_user: LookupMap<AccountId,Vec<CID>>,
     total_access: UnorderedMap<Metadata>,
+    keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>
 }
+
 
 pub impl Contract {
 
+    pub fn new() -> Self {
+
+    }
+
+    pub fn new_meta_data(&self, ) -> Metadata {
+
+    }
+
+    pub fn get_data_by_id(&self, data_id: CID) -> Metadata {
+
+    }
+
+    pub fn new_meta_data(state: State, title: String, tags: String, createby: AccountId, cid_encrypted: CID) -> Metadata {
+
+    }
+
+
+ 
     pub fn purchase(cid: CID, buyer_id: AccountId) -> Metadata {
         let owner = self.data_by_id.get(&cid).unwrap();
     }
