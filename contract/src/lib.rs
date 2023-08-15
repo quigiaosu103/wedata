@@ -35,20 +35,24 @@ pub struct Contract {
     keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>
 }
 
-
+#[near_bindgen]
 impl Contract {
     #[init]
     pub fn new() -> Self {
-        Self {contract_owner: env::signer_account_id(),
-        data_by_owner: LookupMap::new(b"data by user".try_to_vec().unwrap()),
-        data_by_id:  LookupMap::new(b"data by id".try_to_vec().unwrap()),
-        access_by_user: LookupMap::new(b"access by user".try_to_vec().unwrap()),
-        total_access: UnorderedMap::new(b"total access".try_to_vec().unwrap()),
-        keys_by_account: LookupMap::new(b"keys by account".try_to_vec().unwrap()),}
+        Self {
+            contract_owner: env::signer_account_id(),
+            data_by_owner: LookupMap::new(b"data by user".try_to_vec().unwrap()),
+            data_by_id:  LookupMap::new(b"data by id".try_to_vec().unwrap()),
+            access_by_user: LookupMap::new(b"access by user".try_to_vec().unwrap()),
+            total_access: UnorderedMap::new(b"total access".try_to_vec().unwrap()),
+            keys_by_account: LookupMap::new(b"keys by account".try_to_vec().unwrap())
+        }
     }
 // chỗ này có vấn đề vì mình không biết cái CID
     pub fn get_data_by_id(&self, data_id: CID) -> Metadata {
-        self.data_by_id.get(&data_id).clone().unwrap()
+        let data = self.data_by_id.get(&data_id).clone().unwrap();
+        data
+        
     }
 
     pub fn new_meta_data(&mut self, state: State, title_given: String, tags_given: String, createby: AccountId, cid_encrypted_given: CID) -> Metadata {
@@ -56,7 +60,7 @@ impl Contract {
             state,
             title: title_given.clone(),
             tags: tags_given.clone(),
-            createby,
+            createby: createby.clone(),
             cid_encrypted: cid_encrypted_given.clone(),
             shareadress: vec![]
         };
