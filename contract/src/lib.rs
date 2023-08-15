@@ -69,6 +69,14 @@ impl Contract {
         meta_data 
     }
 
+    pub fn set_state(&mut self, state: State, cid: CID)-> { //thay đổi trạng thái data (private/public)
+
+    }
+
+    pub fn access_to_data(&mut self, account_id: AccountId, cid: CID)  { //add user to shareadress
+
+    }
+
     
     // #[payable]
     // pub fn purchase(cid: CID, buyer_id: AccountId) -> Metadata {
