@@ -34,7 +34,14 @@ pub struct Metadata {
     pub list_access: Vec<AccountId>
 }
 
-
+impl  Metadata {
+    fn update_state(&mut self, new_state: State) {
+        self.state = new_state;
+    }
+    fn push_shareaddress(&mut self, account_id: AccountId) {
+        self.list_access.push(account_id);
+    }
+}
 
 
 #[near_bindgen]
@@ -44,7 +51,7 @@ pub struct Contract {
     data_by_owner: LookupMap<AccountId,Vec<ECID>>,
     data_by_id: LookupMap<ECID,Metadata>,
     access_by_user: LookupMap<AccountId,Vec<ECID>>,
-    total_access: UnorderedMap<u32, Metadata>,
+    total_published: UnorderedMap<u32, Metadata>,
     keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>,
     access_by_data: LookupMap<ECID, LookupMap<AccountId, String>> //the account_id and their pub_key in a data
 
@@ -64,6 +71,10 @@ pub trait Function {
     fn get_data_by_owner(&self, owner_account_id: AccountId)-> Vec<Metadata>;
     fn get_user_by_data(&self, encrypted_cid: ECID) -> Vec<AccountId>;
     fn get_data_value(&self, encrypted_cid: ECID) -> DataValue;
+    fn update_access_data(&mut self,account_id: AccountId, cid: ECID);
+    fn update_data_shareAddress(&mut self,account_id: AccountId, cid: ECID) ;
+    fn update_total_publish(&mut self,account_id: AccountId);
+    fn replace_metadata(&mut self, key_to_replace: u32, new_metadata: Metadata);
 }
 
 #[near_bindgen]
@@ -75,7 +86,7 @@ impl Function for Contract {
             data_by_owner: LookupMap::new(b"data by user".try_to_vec().unwrap()),
             data_by_id:  LookupMap::new(b"data by id".try_to_vec().unwrap()),
             access_by_user: LookupMap::new(b"access by user".try_to_vec().unwrap()),
-            total_access: UnorderedMap::new(b"total access".try_to_vec().unwrap()),
+            total_published: UnorderedMap::new(b"total access".try_to_vec().unwrap()),
             keys_by_account: LookupMap::new(b"keys by account".try_to_vec().unwrap()),
             access_by_data: LookupMap::new(b"access_by_data".try_to_vec().unwrap()),
         }
@@ -99,13 +110,67 @@ impl Function for Contract {
         meta_data 
     }
 
-    fn set_state(&mut self, state: State, encrypted_cid: ECID) -> Metadata { //set trạng thái public/private cho data
-        //kiểm tra điều kiện : owner? 
-        self.data_by_id.get(&encrypted_cid).unwrap()
+    fn set_state(&mut self, state: State, cid: ECID) -> Metadata { //thay đổi trạng thái data (private/public)
+        if let Some(mut metadata) = self.data_by_id.get(&cid) { //sua thanh assert! de bao loi neu k co data
+            
+            metadata.update_state(state.clone());
+
+            let mut key_find = 0;
+            for (key, value) in self.total_published.iter() {
+                if value.cid_encrypted == cid {
+                    key_find = key;
+                    break;
+                }
+            }
+            if let Some(mut updated_metadata) = self.total_published.get(&key_find) {
+                updated_metadata.update_state(state.clone());
+                self.replace_metadata(key_find, updated_metadata.clone());
+                return updated_metadata;
+            }
+        }
+        
+
     }
-    
-    fn access_to_data(&mut self, encrypted_cid: ECID, user_id: AccountId, pub_key: String) { // access 1 user vào data
-        //kiểm tra người dùng == owner?, ...
+
+    fn replace_metadata(&mut self, key_to_replace: u32, new_metadata: Metadata) {
+        let total_access = &mut self.total_published;
+        
+        // Sử dụng phạm vi ngắn hơn để mượn self.total_access
+        total_access.remove(&key_to_replace);
+        total_access.insert(&key_to_replace, &new_metadata);
+    }
+
+    fn update_access_data(&mut self,account_id: AccountId, cid: ECID) {
+        let mut data_list = self.access_by_user.get(&account_id).unwrap_or_else(|| vec![]);
+        data_list.push(cid.clone());
+        self.access_by_user.insert(&account_id, &data_list);
+    }
+
+    fn update_data_shareAddress(&mut self,account_id: AccountId, cid: ECID) {
+        if let Some(mut metadata) = self.data_by_id.get(&cid) {
+            metadata.push_shareaddress(account_id);
+        }
+    }
+
+    fn update_total_publish(&mut self,account_id: AccountId) {
+        let mut key_find = 0; 
+        for (key, value) in self.total_published.iter() {// lỗi logic: chỗ này nếu không có owner nào giống account_id thì nó sẽ lấy metadata đầu tiên
+            if value.owner == account_id {
+                key_find = key;
+                break;
+            }
+        }
+
+        if let Some(mut metadata) = self.total_published.get(&key_find) {
+            metadata.push_shareaddress(account_id);
+        }
+
+    }
+
+    fn access_to_data(&mut self,  cid: ECID, user_id: AccountId, pub_key: String) {
+        self.update_access_data(user_id.clone(), cid.clone());
+        self.update_data_shareAddress(user_id.clone(), cid.clone());
+        self.update_total_publish(user_id);
     }
 
     #[payable]
@@ -155,7 +220,7 @@ impl Function for Contract {
     //al data which have been published for market
     fn get_published_data(&self) -> Vec<Metadata> {
         let mut vec_data: Vec<Metadata> = vec![];
-        let published_data = &self.total_access;
+        let published_data = &self.total_published;
         for i in 0..published_data.len() {
             let data = published_data.get(&(i as u32)).unwrap();
             vec_data.push(data);
