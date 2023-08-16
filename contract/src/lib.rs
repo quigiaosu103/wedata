@@ -43,7 +43,6 @@ impl  Metadata {
     }
 }
 
-
 #[near_bindgen]
 #[derive(PanicOnDefault, BorshDeserialize, BorshSerialize)]
 pub struct Contract {
@@ -60,7 +59,7 @@ pub struct Contract {
 pub trait Function {
     fn new()-> Self;
     fn get_data_by_id(&self, data_id: ECID) -> Metadata;
-    fn new_meta_data(&mut self, state: State, title_given: String, tags_given: String, owner: AccountId, cid_encrypted_given: ECID) -> Metadata;
+    fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID) -> Metadata;
     fn set_state(&mut self, state: State, cid: ECID) -> Metadata;
     fn access_to_data(&mut self, cid: ECID, user_id: AccountId, pub_key: String) ;
     fn purchase(&mut self, cid: ECID, buyer_id: AccountId, pub_key: String) -> Metadata;
@@ -72,9 +71,9 @@ pub trait Function {
     fn get_user_by_data(&self, encrypted_cid: ECID) -> Vec<AccountId>;
     fn get_data_value(&self, encrypted_cid: ECID) -> DataValue;
     fn update_access_data(&mut self,account_id: AccountId, cid: ECID);
-    fn update_data_shareAddress(&mut self,account_id: AccountId, cid: ECID) ;
+    fn update_data_share_address(&mut self,account_id: AccountId, cid: ECID) ;
     fn update_total_publish(&mut self,account_id: AccountId);
-    fn replace_metadata(&mut self, key_to_replace: u32, new_metadata: Metadata);
+    fn replace_metadata_by_key(&mut self, key_to_replace: u32, new_metadata: Metadata);
 }
 
 #[near_bindgen]
@@ -93,9 +92,10 @@ impl Function for Contract {
     }
 // chỗ này có vấn đề vì mình không biết cái CID
 
-    fn new_meta_data(&mut self, state: State, title_given: String, tags_given: String, owner: AccountId, cid_encrypted_given: ECID) -> Metadata {
+    fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID) -> Metadata {
+        let owner = env::signer_account_id();
         let meta_data = Metadata {
-            state,
+            state: State::Private,
             title: title_given.clone(),
             tags: tags_given.clone(),
             owner: owner.clone(),
@@ -109,30 +109,26 @@ impl Function for Contract {
         self.data_by_owner.insert(&owner,&vec_data_by_owner);
         meta_data 
     }
+    
 
     fn set_state(&mut self, state: State, cid: ECID) -> Metadata { //thay đổi trạng thái data (private/public)
-        if let Some(mut metadata) = self.data_by_id.get(&cid) { //sua thanh assert! de bao loi neu k co data
-            
-            metadata.update_state(state.clone());
+        let mut metadata = self.get_data_by_id(cid.clone());
+        metadata.update_state(state.clone());
 
-            let mut key_find = 0;
-            for (key, value) in self.total_published.iter() {
-                if value.cid_encrypted == cid {
-                    key_find = key;
-                    break;
-                }
-            }
-            if let Some(mut updated_metadata) = self.total_published.get(&key_find) {
-                updated_metadata.update_state(state.clone());
-                self.replace_metadata(key_find, updated_metadata.clone());
-                return updated_metadata;
+        let pulished_data = self.get_published_data();
+
+        for element in pulished_data {
+            if element.cid_encrypted == cid {
+                metadata.update_state(state.clone()); // Sử dụng clone() nếu value.update_state() yêu cầu tham số state là mutable
+                break;
             }
         }
-        
+
+        metadata
 
     }
 
-    fn replace_metadata(&mut self, key_to_replace: u32, new_metadata: Metadata) {
+    fn replace_metadata_by_key(&mut self, key_to_replace: u32, new_metadata: Metadata) {
         let total_access = &mut self.total_published;
         
         // Sử dụng phạm vi ngắn hơn để mượn self.total_access
@@ -145,16 +141,17 @@ impl Function for Contract {
         data_list.push(cid.clone());
         self.access_by_user.insert(&account_id, &data_list);
     }
-
-    fn update_data_shareAddress(&mut self,account_id: AccountId, cid: ECID) {
-        if let Some(mut metadata) = self.data_by_id.get(&cid) {
-            metadata.push_shareaddress(account_id);
-        }
+	
+    fn update_data_share_address(&mut self,account_id: AccountId, cid: ECID) {
+        let mut metadata = self.get_data_by_id(cid.clone());
+        metadata.push_shareaddress(account_id);
+        self.data_by_id.remove(&cid);
+        self.data_by_id.insert(&cid, &metadata);
     }
 
     fn update_total_publish(&mut self,account_id: AccountId) {
         let mut key_find = 0; 
-        for (key, value) in self.total_published.iter() {// lỗi logic: chỗ này nếu không có owner nào giống account_id thì nó sẽ lấy metadata đầu tiên
+        for (key, value) in self.total_published.iter() {
             if value.owner == account_id {
                 key_find = key;
                 break;
@@ -163,13 +160,18 @@ impl Function for Contract {
 
         if let Some(mut metadata) = self.total_published.get(&key_find) {
             metadata.push_shareaddress(account_id);
+            self.replace_metadata_by_key(key_find, metadata);
         }
 
     }
 
     fn access_to_data(&mut self,  cid: ECID, user_id: AccountId, pub_key: String) {
+        assert_ne!(user_id.clone(), env::signer_account_id(), "You are owner of this data");
+        let mut lk_map_data = self.access_by_data.get(&cid).unwrap();
+        lk_map_data.insert(&user_id, &pub_key);
+        self.access_by_data.insert(&cid, &lk_map_data);
         self.update_access_data(user_id.clone(), cid.clone());
-        self.update_data_shareAddress(user_id.clone(), cid.clone());
+        self.update_data_share_address(user_id.clone(), cid.clone());
         self.update_total_publish(user_id);
     }
 

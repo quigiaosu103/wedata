@@ -1,1 +1,0 @@
-{"rustc":3249269541886640494,"features":"[\"alloc\"]","target":3227559903989411901,"profile":12637318739757120569,"path":16888896815439535307,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"debug\\.fingerprint\\wyz-ea4ac9aadf6a15bf\\dep-lib-wyz"}}],"rustflags":["-C","link-args=-s"],"metadata":18109821273324682741,"config":2202906307356721367,"compile_kind":0}

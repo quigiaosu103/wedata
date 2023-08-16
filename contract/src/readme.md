@@ -1,0 +1,1 @@
+near call dev-1692175856402-48755504439135 new_meta_data '{"title_given": "New data", "tags_given": "Language model,truth,fi", "cid_encrypted_given":"dnakdasndsdnladnajsnd"}' --accountId quivok8t.testnet

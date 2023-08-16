@@ -1,1 +1,0 @@
-{"rustc":3249269541886640494,"features":"[]","target":5760977173082594167,"profile":12637318739757120569,"path":10219416020309596540,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"debug\\.fingerprint\\bytesize-4fd829c733ae3907\\dep-lib-bytesize"}}],"rustflags":["-C","link-args=-s"],"metadata":12146819253632092093,"config":2202906307356721367,"compile_kind":0}
