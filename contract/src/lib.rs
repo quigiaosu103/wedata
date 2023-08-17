@@ -18,7 +18,7 @@ pub enum State {
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
 pub struct DataValue {
-    pub public_key: String,
+    pub user_id: String,
     pub encrypted_cid: ECID,
 }
 
@@ -52,7 +52,7 @@ pub struct Contract {
     access_by_user: LookupMap<AccountId,Vec<ECID>>,
     total_published: UnorderedMap<u32, Metadata>,
     keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>,
-    access_by_data: LookupMap<ECID, LookupMap<AccountId, String>> //the account_id and their pub_key in a data
+    access_by_data: LookupMap<ECID, AccountId> //the account_id and their pub_key in a data
 
 }
 
@@ -60,15 +60,21 @@ pub trait Function {
     fn new()-> Self;
     fn get_data_by_id(&self, data_id: ECID) -> Metadata;
     fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID) -> Metadata;
-    fn set_state(&mut self, state: State, cid: ECID) -> Metadata;
+    //chuyển trạng thái của data private-> public  và set price
+    fn set_state(&mut self, state: State, cid: ECID, price: Balance) -> Metadata;
     fn access_to_data(&mut self, cid: ECID, user_id: AccountId, pub_key: String) ;
-    fn purchase(&mut self, cid: ECID, buyer_id: AccountId, pub_key: String) -> Metadata;
+    fn purchase(&mut self, cid: ECID, pub_key: String) -> Metadata;
     fn payment(&self,sender: AccountId, receiver: AccountId, deposit: Balance);
     fn is_accessed(&self, encrypted_id: ECID, user_id: AccountId) -> bool;
+    //lấy những data đã được public (xuất hiện trên marketplace)
     fn get_published_data(&self) -> Vec<Metadata> ;
+    //lấy những data mà user đã mua
     fn get_accessed_data_by_user(&self, user_id: AccountId) -> Vec<Metadata>;
+    //Những data của người upload lên
     fn get_data_by_owner(&self, owner_account_id: AccountId)-> Vec<Metadata>;
+    //những user đã mua data đó
     fn get_user_by_data(&self, encrypted_cid: ECID) -> Vec<AccountId>;
+    //xét điều kiện và trả về accountId của người được quyền access và key
     fn get_data_value(&self, encrypted_cid: ECID) -> DataValue;
     fn update_access_data(&mut self,account_id: AccountId, cid: ECID);
     fn update_data_share_address(&mut self,account_id: AccountId, cid: ECID) ;
@@ -111,21 +117,16 @@ impl Function for Contract {
     }
     
 
-    fn set_state(&mut self, state: State, cid: ECID) -> Metadata { //thay đổi trạng thái data (private/public)
+    fn set_state(&mut self, state: State, cid: ECID, price: Balance) -> Metadata { //thay đổi trạng thái data (private/public)
         let mut metadata = self.get_data_by_id(cid.clone());
+        metadata.price = price;
         metadata.update_state(state.clone());
-
-        let pulished_data = self.get_published_data();
-
-        for element in pulished_data {
-            if element.cid_encrypted == cid {
-                metadata.update_state(state.clone()); // Sử dụng clone() nếu value.update_state() yêu cầu tham số state là mutable
-                break;
-            }
+        if state == State::Public {
+            let new_index = self.total_published.len();
+            self.total_published.insert(&(new_index as u32 +1), &metadata);
         }
-
+        self.data_by_id.insert(&cid, &metadata);
         metadata
-
     }
 
     fn replace_metadata_by_key(&mut self, key_to_replace: u32, new_metadata: Metadata) {
@@ -167,23 +168,24 @@ impl Function for Contract {
 
     fn access_to_data(&mut self,  cid: ECID, user_id: AccountId, pub_key: String) {
         assert_ne!(user_id.clone(), env::signer_account_id(), "You are owner of this data");
-        let mut lk_map_data = self.access_by_data.get(&cid).unwrap();
-        lk_map_data.insert(&user_id, &pub_key);
-        self.access_by_data.insert(&cid, &lk_map_data);
+        // let mut lk_map_data = self.access_by_data.get(&cid).unwrap();
+        // lk_map_data.insert(&user_id, &pub_key);
+        // self.access_by_data.insert(&cid, &lk_map_data);
+        self.access_by_data.insert(&cid, &user_id);
         self.update_access_data(user_id.clone(), cid.clone());
         self.update_data_share_address(user_id.clone(), cid.clone());
         self.update_total_publish(user_id);
     }
 
     #[payable]
-    fn purchase(&mut self, encrypted_cid: ECID, buyer_id: AccountId, pub_key: String)-> Metadata {
+    fn purchase(&mut self, encrypted_cid: ECID, pub_key: String)-> Metadata {
         let data = self.data_by_id.get(&encrypted_cid).unwrap();
         let deposit = env::attached_deposit();
+        let buyer_id = env::signer_account_id();
         assert_ne!(env::signer_account_id(), data.owner, "You are owner of this data!");
         assert_eq!(deposit, data.price, "Invalid deposit!");
         self.payment(buyer_id.clone(), data.owner, deposit);
         self.access_to_data(encrypted_cid.clone(), buyer_id, pub_key);
-        self.get_data_by_id(encrypted_cid.clone());
         self.data_by_id.get(&encrypted_cid).unwrap()
     }
 
@@ -214,6 +216,7 @@ impl Function for Contract {
     //=====================GET FUNCTION=============================
 
     fn get_data_by_id(&self, data_id: ECID) -> Metadata {
+        assert!(self.data_by_id.contains_key(&data_id), "data is not exist!");
         let data = self.data_by_id.get(&data_id).clone().unwrap();
         data
         
@@ -223,9 +226,8 @@ impl Function for Contract {
     fn get_published_data(&self) -> Vec<Metadata> {
         let mut vec_data: Vec<Metadata> = vec![];
         let published_data = &self.total_published;
-        for i in 0..published_data.len() {
-            let data = published_data.get(&(i as u32)).unwrap();
-            vec_data.push(data);
+        for i in published_data {
+            vec_data.push(i.1);
         }
         vec_data
     }
@@ -263,15 +265,12 @@ impl Function for Contract {
     }
 
     fn get_data_value(&self, encrypted_cid: ECID) -> DataValue {
-        let list_access = self
-            .access_by_data
-            .get(&encrypted_cid)
-            .unwrap_or_else(||LookupMap::new(b"access_by_data".try_to_vec().unwrap()));
+        let list_access = &self.access_by_data;
         let singer = env::signer_account_id();
-        assert!(list_access.contains_key(&singer), "You dont have permision to get this data!");
+        assert!(list_access.contains_key(&singer.to_string()), "You dont have permision to get this data!");
         DataValue {
-            public_key: list_access.get(&env::signer_account_id()).unwrap(),
-            encrypted_cid:encrypted_cid 
+            user_id: singer.to_string(),
+            encrypted_cid:encrypted_cid
         }
     }
 
