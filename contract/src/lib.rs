@@ -7,6 +7,7 @@ use event::*;
 
 pub type ECID = String;
 pub type DecryptedKey = String;
+pub const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000; 
 
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
@@ -19,8 +20,9 @@ pub enum State {
 #[serde(crate = "near_sdk::serde")]
 pub struct DataValue {
     pub user_id: String,
-    pub encrypted_cid: ECID,
+    pub key_cid: String,
 }
+
 
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
@@ -31,7 +33,8 @@ pub struct Metadata {
     pub owner: AccountId,
     pub cid_encrypted: String,
     pub price: Balance,
-    pub list_access: Vec<AccountId>
+    pub size: String,
+    pub list_access: Vec<AccountId>,
 }
 
 impl  Metadata {
@@ -52,18 +55,18 @@ pub struct Contract {
     access_by_user: LookupMap<AccountId,Vec<ECID>>,
     total_published: UnorderedMap<u32, Metadata>,
     keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>,
-    access_by_data: LookupMap<ECID, AccountId> //the account_id and their pub_key in a data
+    access_by_data: LookupMap<ECID, DataValue> //the account_id in a dataset
 
 }
 
 pub trait Function {
     fn new()-> Self;
     fn get_data_by_id(&self, data_id: ECID) -> Metadata;
-    fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID) -> Metadata;
+    fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID, size: String) -> Metadata;
     //chuyển trạng thái của data private-> public  và set price
     fn set_state(&mut self, state: State, cid: ECID, price: Balance) -> Metadata;
-    fn access_to_data(&mut self, cid: ECID, user_id: AccountId, pub_key: String) ;
-    fn purchase(&mut self, cid: ECID, pub_key: String) -> Metadata;
+    fn access_to_data(&mut self, cid: ECID, user_id: AccountId, access_key: String);
+    fn purchase(&mut self, encrypted_cid: ECID, access_key: String) -> Metadata;
     fn payment(&self,sender: AccountId, receiver: AccountId, deposit: Balance);
     fn is_accessed(&self, encrypted_id: ECID, user_id: AccountId) -> bool;
     //lấy những data đã được public (xuất hiện trên marketplace)
@@ -98,7 +101,7 @@ impl Function for Contract {
     }
 // chỗ này có vấn đề vì mình không biết cái CID
 
-    fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID) -> Metadata {
+    fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID, size: String) -> Metadata {
         let owner = env::signer_account_id();
         let meta_data = Metadata {
             state: State::Private,
@@ -107,7 +110,8 @@ impl Function for Contract {
             owner: owner.clone(),
             cid_encrypted: cid_encrypted_given.clone(),
             price: 0,
-            list_access: vec![]
+            list_access: vec![],
+            size
         };
         self.data_by_id.insert(&cid_encrypted_given,&meta_data);
         let mut vec_data_by_owner = self.data_by_owner.get(&owner).unwrap_or_else(||vec![]);
@@ -166,26 +170,22 @@ impl Function for Contract {
 
     }
 
-    fn access_to_data(&mut self,  cid: ECID, user_id: AccountId, pub_key: String) {
-        assert_ne!(user_id.clone(), env::signer_account_id(), "You are owner of this data");
-        // let mut lk_map_data = self.access_by_data.get(&cid).unwrap();
-        // lk_map_data.insert(&user_id, &pub_key);
-        // self.access_by_data.insert(&cid, &lk_map_data);
-        self.access_by_data.insert(&cid, &user_id);
+    fn access_to_data(&mut self,  cid: ECID, user_id: AccountId, access_key: String) {
+        self.access_by_data.insert(&cid, &DataValue { user_id:user_id.to_string(), key_cid: access_key });
         self.update_access_data(user_id.clone(), cid.clone());
         self.update_data_share_address(user_id.clone(), cid.clone());
         self.update_total_publish(user_id);
     }
 
     #[payable]
-    fn purchase(&mut self, encrypted_cid: ECID, pub_key: String)-> Metadata {
+    fn purchase(&mut self, encrypted_cid: ECID, access_key: String)-> Metadata {
         let data = self.data_by_id.get(&encrypted_cid).unwrap();
         let deposit = env::attached_deposit();
         let buyer_id = env::signer_account_id();
-        assert_ne!(env::signer_account_id(), data.owner, "You are owner of this data!");
-        assert_eq!(deposit, data.price, "Invalid deposit!");
+        assert_ne!(buyer_id, data.owner, "You are owner of this data!");
+        assert_eq!(deposit, data.price*ONE_NEAR, "Invalid deposit!");
         self.payment(buyer_id.clone(), data.owner, deposit);
-        self.access_to_data(encrypted_cid.clone(), buyer_id, pub_key);
+        self.access_to_data(encrypted_cid.clone(), buyer_id, access_key);
         self.data_by_id.get(&encrypted_cid).unwrap()
     }
 
@@ -267,11 +267,8 @@ impl Function for Contract {
     fn get_data_value(&self, encrypted_cid: ECID) -> DataValue {
         let list_access = &self.access_by_data;
         let singer = env::signer_account_id();
-        assert!(list_access.contains_key(&singer.to_string()), "You dont have permision to get this data!");
-        DataValue {
-            user_id: singer.to_string(),
-            encrypted_cid:encrypted_cid
-        }
+        assert_eq!(list_access.get(&encrypted_cid).unwrap().user_id, singer.to_string(), "You dont have permision to get this data!");
+        list_access.get(&encrypted_cid).unwrap()
     }
 
 }
