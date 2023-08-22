@@ -31,7 +31,7 @@ pub struct Metadata {
     pub title: String,
     pub tags: String,
     pub owner: AccountId,
-    pub cid_encrypted: String,
+    pub cid_encrypted: ECID,
     pub price: Balance,
     pub size: String,
     pub list_access: Vec<AccountId>,
@@ -55,8 +55,8 @@ pub struct Contract {
     access_by_user: LookupMap<AccountId,Vec<ECID>>,
     total_published: UnorderedMap<u32, Metadata>,
     keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>,
-    access_by_data: LookupMap<ECID, DataValue> //the account_id in a dataset
-
+    access_by_data: LookupMap<ECID, DataValue>, //the account_id in a dataset
+    waiting_list: LookupMap<AccountId, Vec<(AccountId, ECID, String)>>
 }
 
 pub trait Function {
@@ -83,6 +83,8 @@ pub trait Function {
     fn update_data_share_address(&mut self,account_id: AccountId, cid: ECID) ;
     fn update_total_publish(&mut self,account_id: AccountId);
     fn replace_metadata_by_key(&mut self, key_to_replace: u32, new_metadata: Metadata);
+    fn store_waiting_list(&mut self, buyer: AccountId, data: Metadata, pub_key: String);
+    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String) -> Metadata;
 }
 
 #[near_bindgen]
@@ -97,6 +99,7 @@ impl Function for Contract {
             total_published: UnorderedMap::new(b"total access".try_to_vec().unwrap()),
             keys_by_account: LookupMap::new(b"keys by account".try_to_vec().unwrap()),
             access_by_data: LookupMap::new(b"access_by_data".try_to_vec().unwrap()),
+            waiting_list: LookupMap::new(b"waiting list".try_to_vec().unwrap()),
         }
     }
 // chỗ này có vấn đề vì mình không biết cái CID
@@ -177,16 +180,52 @@ impl Function for Contract {
         self.update_total_publish(user_id);
     }
 
+    fn store_waiting_list(&mut self, buyer: AccountId, data: Metadata, pub_key: String) {
+        let id = data.cid_encrypted;
+        let owner = data.owner;
+        let mut vec_waiting =  self.waiting_list.get(&owner).unwrap_or_else(||Vec::new());
+        vec_waiting.push((buyer, id, pub_key));
+        self.waiting_list.insert(&owner, &vec_waiting);
+    }
+
     #[payable]
-    fn purchase(&mut self, encrypted_cid: ECID, access_key: String)-> Metadata {
+    fn purchase(&mut self, encrypted_cid: ECID, pub_key: String)-> Metadata {
         let data = self.data_by_id.get(&encrypted_cid).unwrap();
         let deposit = env::attached_deposit();
         let buyer_id = env::signer_account_id();
         assert_ne!(buyer_id, data.owner, "You are owner of this data!");
         assert_eq!(deposit, data.price*ONE_NEAR, "Invalid deposit!");
-        self.payment(buyer_id.clone(), data.owner, deposit);
-        self.access_to_data(encrypted_cid.clone(), buyer_id, access_key);
+        self.store_waiting_list(buyer_id, data, pub_key);
+
+
+        
         self.data_by_id.get(&encrypted_cid).unwrap()
+    }
+
+    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String) -> Metadata {
+        let data = self.get_data_by_id(encrypted_cid.clone());
+        let owner = data.owner;
+        if is_access {
+            
+            self.payment(buyer_id.clone(), owner.clone(), data.price);
+            self.access_to_data(encrypted_cid.clone(), buyer_id.clone(), access_key);
+
+        } else {
+             self.payment(owner.clone(), buyer_id.clone(), data.price);
+        }
+
+        let mut w_list = self.waiting_list.get(&owner.clone()).unwrap();
+        let mut index = 0;
+        for i in w_list.clone() {
+            if i.0 == buyer_id && i.1 == encrypted_cid {
+                break;
+            }
+            index+=1;
+        }
+        w_list.remove(index);
+        self.waiting_list.insert(&owner, &w_list);
+        self.data_by_id.get(&encrypted_cid).unwrap()
+
     }
 
     fn payment(&self,sender: AccountId, receiver: AccountId, amount: Balance) {
