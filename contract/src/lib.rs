@@ -35,6 +35,7 @@ pub struct Metadata {
     pub price: Balance,
     pub size: String,
     pub list_access: Vec<AccountId>,
+    pub is_active: bool
 }
 
 impl  Metadata {
@@ -56,7 +57,8 @@ pub struct Contract {
     total_published: UnorderedMap<u32, Metadata>,
     keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>,
     access_by_data: LookupMap<ECID, DataValue>, //the account_id in a dataset
-    waiting_list: LookupMap<AccountId, Vec<(AccountId, ECID, String)>>
+    waiting_list: LookupMap<AccountId, Vec<(AccountId, ECID, String)>>,
+    data_unconfirmed: LookupMap<ECID, AccountId>
 }
 
 pub trait Function {
@@ -70,7 +72,7 @@ pub trait Function {
     fn payment(&self,sender: AccountId, receiver: AccountId, deposit: Balance);
     fn is_accessed(&self, encrypted_id: ECID, user_id: AccountId) -> bool;
     //lấy những data đã được public (xuất hiện trên marketplace)
-    fn get_published_data(&self) -> Vec<Metadata> ;
+    fn get_published_data(&self, user: AccountId) -> Vec<Metadata> ;
     //lấy những data mà user đã mua
     fn get_accessed_data_by_user(&self, user_id: AccountId) -> Vec<Metadata>;
     //Những data của người upload lên
@@ -85,6 +87,7 @@ pub trait Function {
     fn replace_metadata_by_key(&mut self, key_to_replace: u32, new_metadata: Metadata);
     fn store_waiting_list(&mut self, buyer: AccountId, data: Metadata, pub_key: String);
     fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String) -> Metadata;
+    fn get_waiting_list(&self, owner: AccountId) -> Vec<(AccountId, ECID, String)>;
 }
 
 #[near_bindgen]
@@ -100,6 +103,7 @@ impl Function for Contract {
             keys_by_account: LookupMap::new(b"keys by account".try_to_vec().unwrap()),
             access_by_data: LookupMap::new(b"access_by_data".try_to_vec().unwrap()),
             waiting_list: LookupMap::new(b"waiting list".try_to_vec().unwrap()),
+            data_unconfirmed: LookupMap::new(b"data unconfirmed".try_to_vec().unwrap()),
         }
     }
 // chỗ này có vấn đề vì mình không biết cái CID
@@ -114,7 +118,8 @@ impl Function for Contract {
             cid_encrypted: cid_encrypted_given.clone(),
             price: 0,
             list_access: vec![],
-            size
+            size,
+            is_active: false
         };
         self.data_by_id.insert(&cid_encrypted_given,&meta_data);
         let mut vec_data_by_owner = self.data_by_owner.get(&owner).unwrap_or_else(||vec![]);
@@ -195,10 +200,8 @@ impl Function for Contract {
         let buyer_id = env::signer_account_id();
         assert_ne!(buyer_id, data.owner, "You are owner of this data!");
         assert_eq!(deposit, data.price*ONE_NEAR, "Invalid deposit!");
-        self.store_waiting_list(buyer_id, data, pub_key);
-
-
-        
+        self.store_waiting_list(buyer_id.clone(), data, pub_key.clone());
+        self.data_unconfirmed.insert(&pub_key, &buyer_id);
         self.data_by_id.get(&encrypted_cid).unwrap()
     }
 
@@ -209,6 +212,7 @@ impl Function for Contract {
             
             self.payment(buyer_id.clone(), owner.clone(), data.price);
             self.access_to_data(encrypted_cid.clone(), buyer_id.clone(), access_key);
+            self.data_unconfirmed.remove(&encrypted_cid);
 
         } else {
              self.payment(owner.clone(), buyer_id.clone(), data.price);
@@ -262,11 +266,17 @@ impl Function for Contract {
     }
 
     //al data which have been published for market
-    fn get_published_data(&self) -> Vec<Metadata> {
+    fn get_published_data(&self, user: AccountId) -> Vec<Metadata> {
         let mut vec_data: Vec<Metadata> = vec![];
         let published_data = &self.total_published;
         for i in published_data {
-            vec_data.push(i.1);
+            let mut data = i.1;
+            if self.data_unconfirmed.contains_key(&data.cid_encrypted) {
+                if self.data_unconfirmed.get(&data.cid_encrypted).unwrap() == user {
+                    data.is_active = true;
+                }
+            }
+            vec_data.push(data);
         }
         vec_data
     }
@@ -308,6 +318,15 @@ impl Function for Contract {
         let singer = env::signer_account_id();
         assert_eq!(list_access.get(&encrypted_cid).unwrap().user_id, singer.to_string(), "You dont have permision to get this data!");
         list_access.get(&encrypted_cid).unwrap()
+    }
+
+    fn get_waiting_list(&self, owner: AccountId) -> Vec<(AccountId, ECID, String)> {
+        let mut vec_result: Vec<(AccountId, ECID, String)> = vec![];
+        let vec_waiting = self.waiting_list.get(&owner).unwrap_or_else(|| Vec::new()); 
+        for i in vec_waiting {
+            vec_result.push(i);
+        }
+        vec_result
     }
 
 }
