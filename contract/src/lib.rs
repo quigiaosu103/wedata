@@ -1,7 +1,7 @@
 
 pub mod event;
 use std::vec;
-use near_sdk::{near_bindgen, collections::{UnorderedMap, LookupMap}, AccountId, Balance, borsh::BorshSerialize, env::{self}, PanicOnDefault, Promise, serde::{Deserialize, Serialize}};
+use near_sdk::{near_bindgen, collections::{UnorderedMap, LookupMap}, AccountId, Balance, borsh::BorshSerialize, env::{self}, PanicOnDefault, Promise, serde::{Deserialize, Serialize}, ext_contract, json_types::U128};
 use near_sdk::borsh::{self, BorshDeserialize};
 use event::*;
 
@@ -35,7 +35,7 @@ pub struct Metadata {
     pub price: Balance,
     pub size: String,
     pub list_access: Vec<AccountId>,
-    pub is_active: bool
+    pub is_active: bool,
 }
 
 impl  Metadata {
@@ -61,6 +61,7 @@ pub struct Contract {
     data_unconfirmed: LookupMap<ECID, AccountId>
 }
 
+
 pub trait Function {
     fn new()-> Self;
     fn get_data_by_id(&self, data_id: ECID) -> Metadata;
@@ -68,7 +69,7 @@ pub trait Function {
     //chuyển trạng thái của data private-> public  và set price
     fn set_state(&mut self, state: State, cid: ECID, price: Balance) -> Metadata;
     fn access_to_data(&mut self, cid: ECID, user_id: AccountId, access_key: String);
-    fn purchase(&mut self, encrypted_cid: ECID, access_key: String) -> Metadata;
+    fn purchase(&mut self, encrypted_cid: ECID, access_key: String, contract_id: AccountId) -> Metadata;
     fn payment(&self,sender: AccountId, receiver: AccountId, deposit: Balance);
     fn is_accessed(&self, encrypted_id: ECID, user_id: AccountId) -> bool;
     //lấy những data đã được public (xuất hiện trên marketplace)
@@ -86,8 +87,21 @@ pub trait Function {
     fn update_total_publish(&mut self,account_id: AccountId);
     fn replace_metadata_by_key(&mut self, key_to_replace: u32, new_metadata: Metadata);
     fn store_waiting_list(&mut self, buyer: AccountId, data: Metadata, pub_key: String);
-    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String) -> Metadata;
+    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId) -> Metadata;
     fn get_waiting_list(&self, owner: AccountId) -> Vec<(AccountId, ECID, String)>;
+    fn cross_call(&self, contract_id: AccountId, sender: AccountId, receiver: AccountId, amount: Balance);
+
+}
+
+#[ext_contract(ext_ft_contract)]
+trait ExtFtContract {
+    fn ft_transfer(
+        &mut self,
+        sender_id: AccountId,
+        receiver_id: AccountId, 
+        amount: U128, 
+        memo: Option<String>
+    );
 }
 
 #[near_bindgen]
@@ -119,7 +133,7 @@ impl Function for Contract {
             price: 0,
             list_access: vec![],
             size,
-            is_active: false
+            is_active: false,
         };
         self.data_by_id.insert(&cid_encrypted_given,&meta_data);
         let mut vec_data_by_owner = self.data_by_owner.get(&owner).unwrap_or_else(||vec![]);
@@ -194,23 +208,37 @@ impl Function for Contract {
     }
 
     #[payable]
-    fn purchase(&mut self, encrypted_cid: ECID, pub_key: String)-> Metadata {
+    fn purchase(&mut self, encrypted_cid: ECID, pub_key: String, contract_id: AccountId)-> Metadata {
         let data = self.data_by_id.get(&encrypted_cid).unwrap();
         let deposit = env::attached_deposit();
         let buyer_id = env::signer_account_id();
         assert_ne!(buyer_id, data.owner, "You are owner of this data!");
         assert_eq!(deposit, data.price*ONE_NEAR, "Invalid deposit!");
+        self.cross_call(contract_id.clone(), buyer_id.clone(), contract_id, deposit);
         self.store_waiting_list(buyer_id.clone(), data, pub_key.clone());
-        self.data_unconfirmed.insert(&pub_key, &buyer_id);
+        self.data_unconfirmed.insert(&encrypted_cid, &buyer_id);
         self.data_by_id.get(&encrypted_cid).unwrap()
     }
 
-    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String) -> Metadata {
+    fn cross_call(&self, contract_id: AccountId, sender: AccountId, receiver: AccountId, amount: Balance) {
+        ext_ft_contract::ext(contract_id)
+        // Attach 1 yoctoNEAR with static GAS equal to the GAS for nft transfer. Also attach an unused GAS weight of 1 by default.
+        .with_attached_deposit(1)
+        .ft_transfer(
+            sender,
+            receiver, //seller to transfer the FTs to
+            U128(amount), //amount to transfer
+            Some("Sale from marketplace".to_string()), //memo (to include some context)
+        );
+    }
+
+    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId) -> Metadata {
         let data = self.get_data_by_id(encrypted_cid.clone());
         let owner = data.owner;
         if is_access {
             
             self.payment(buyer_id.clone(), owner.clone(), data.price);
+            self.cross_call(contract_id.clone(), contract_id, owner.clone(), data.price);
             self.access_to_data(encrypted_cid.clone(), buyer_id.clone(), access_key);
             self.data_unconfirmed.remove(&encrypted_cid);
 
