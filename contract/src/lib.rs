@@ -4,6 +4,7 @@ use std::vec;
 use near_sdk::{near_bindgen, collections::{UnorderedMap, LookupMap}, AccountId, Balance, borsh::BorshSerialize, env::{self}, PanicOnDefault, Promise, serde::{Deserialize, Serialize}, ext_contract, json_types::U128};
 use near_sdk::borsh::{self, BorshDeserialize};
 use event::*;
+use std::convert::{TryFrom, TryInto};
 
 pub type ECID = String;
 pub type DecryptedKey = String;
@@ -21,6 +22,7 @@ pub enum State {
 pub struct DataValue {
     pub user_id: String,
     pub key_cid: String,
+    pub pub_key: String
 }
 
 
@@ -58,7 +60,8 @@ pub struct Contract {
     keys_by_account: LookupMap<AccountId, Vec<DecryptedKey>>,
     access_by_data: LookupMap<ECID, DataValue>, //the account_id in a dataset
     waiting_list: LookupMap<AccountId, Vec<(AccountId, ECID, String)>>,
-    data_unconfirmed: LookupMap<ECID, AccountId>
+    data_unconfirmed: LookupMap<ECID, AccountId>,
+    ft_per_account: LookupMap<AccountId, Balance>
 }
 
 
@@ -68,7 +71,7 @@ pub trait Function {
     fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID, size: String) -> Metadata;
     //chuyển trạng thái của data private-> public  và set price
     fn set_state(&mut self, state: State, cid: ECID, price: Balance) -> Metadata;
-    fn access_to_data(&mut self, cid: ECID, user_id: AccountId, access_key: String);
+    fn access_to_data(&mut self, cid: ECID, user_id: AccountId, access_key: String, pub_key: String);
     fn purchase(&mut self, encrypted_cid: ECID, access_key: String, contract_id: AccountId) -> Metadata;
     fn payment(&self,sender: AccountId, receiver: AccountId, deposit: Balance);
     fn is_accessed(&self, encrypted_id: ECID, user_id: AccountId) -> bool;
@@ -81,16 +84,18 @@ pub trait Function {
     //những user đã mua data đó
     fn get_user_by_data(&self, encrypted_cid: ECID) -> Vec<AccountId>;
     //xét điều kiện và trả về accountId của người được quyền access và key
-    fn get_data_value(&self, encrypted_cid: ECID) -> DataValue;
+    fn get_data_value(&self, encrypted_cid: ECID, user_id: AccountId) -> DataValue;
     fn update_access_data(&mut self,account_id: AccountId, cid: ECID);
     fn update_data_share_address(&mut self,account_id: AccountId, cid: ECID) ;
     fn update_total_publish(&mut self,account_id: AccountId);
     fn replace_metadata_by_key(&mut self, key_to_replace: u32, new_metadata: Metadata);
     fn store_waiting_list(&mut self, buyer: AccountId, data: Metadata, pub_key: String);
-    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId) -> Metadata;
+    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId, pub_key: String) -> Metadata;
     fn get_waiting_list(&self, owner: AccountId) -> Vec<(AccountId, ECID, String)>;
     fn cross_call(&self, contract_id: AccountId, sender: AccountId, receiver: AccountId, amount: Balance);
-
+    fn get_balance_of(&self, account_id: AccountId) -> i32;
+    fn set_balance_of(&mut self, account_id: AccountId, new_balance: Balance);
+    fn update_balance(&mut self, sender_id: &AccountId, receiver_id: &AccountId, amount: U128);
 }
 
 #[ext_contract(ext_ft_contract)]
@@ -118,6 +123,7 @@ impl Function for Contract {
             access_by_data: LookupMap::new(b"access_by_data".try_to_vec().unwrap()),
             waiting_list: LookupMap::new(b"waiting list".try_to_vec().unwrap()),
             data_unconfirmed: LookupMap::new(b"data unconfirmed".try_to_vec().unwrap()),
+            ft_per_account: LookupMap::new(b"ft_per_account".try_to_vec().unwrap()),
         }
     }
 // chỗ này có vấn đề vì mình không biết cái CID
@@ -172,7 +178,6 @@ impl Function for Contract {
     fn update_data_share_address(&mut self,account_id: AccountId, cid: ECID) {
         let mut metadata = self.get_data_by_id(cid.clone());
         metadata.push_shareaddress(account_id);
-        self.data_by_id.remove(&cid);
         self.data_by_id.insert(&cid, &metadata);
     }
 
@@ -189,13 +194,12 @@ impl Function for Contract {
             metadata.push_shareaddress(account_id);
             self.replace_metadata_by_key(key_find, metadata);
         }
-
     }
 
-    fn access_to_data(&mut self,  cid: ECID, user_id: AccountId, access_key: String) {
-        self.access_by_data.insert(&cid, &DataValue { user_id:user_id.to_string(), key_cid: access_key });
-        self.update_access_data(user_id.clone(), cid.clone());
+    fn access_to_data(&mut self,  cid: ECID, user_id: AccountId, access_key: String, pub_key: String) {
         self.update_data_share_address(user_id.clone(), cid.clone());
+        self.access_by_data.insert(&cid, &DataValue { user_id:user_id.to_string(), key_cid: access_key, pub_key });
+        self.update_access_data(user_id.clone(), cid.clone());
         self.update_total_publish(user_id);
     }
 
@@ -210,11 +214,9 @@ impl Function for Contract {
     #[payable]
     fn purchase(&mut self, encrypted_cid: ECID, pub_key: String, contract_id: AccountId)-> Metadata {
         let data = self.data_by_id.get(&encrypted_cid).unwrap();
-        let deposit = env::attached_deposit();
         let buyer_id = env::signer_account_id();
         assert_ne!(buyer_id, data.owner, "You are owner of this data!");
-        assert_eq!(deposit, data.price*ONE_NEAR, "Invalid deposit!");
-        self.cross_call(contract_id.clone(), buyer_id.clone(), contract_id, deposit);
+        self.cross_call(contract_id.clone(), buyer_id.clone(), contract_id, data.price * ONE_NEAR);
         self.store_waiting_list(buyer_id.clone(), data, pub_key.clone());
         self.data_unconfirmed.insert(&encrypted_cid, &buyer_id);
         self.data_by_id.get(&encrypted_cid).unwrap()
@@ -232,18 +234,19 @@ impl Function for Contract {
         );
     }
 
-    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId) -> Metadata {
+    fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId, pub_key: String) -> Metadata {
         let data = self.get_data_by_id(encrypted_cid.clone());
         let owner = data.owner;
         if is_access {
             
-            self.payment(buyer_id.clone(), owner.clone(), data.price);
+            // self.payment(buyer_id.clone(), owner.clone(), data.price);
             self.cross_call(contract_id.clone(), contract_id, owner.clone(), data.price);
-            self.access_to_data(encrypted_cid.clone(), buyer_id.clone(), access_key);
+            self.access_to_data(encrypted_cid.clone(), buyer_id.clone(), access_key, pub_key);
             self.data_unconfirmed.remove(&encrypted_cid);
 
         } else {
-             self.payment(owner.clone(), buyer_id.clone(), data.price);
+            self.cross_call(contract_id.clone(), contract_id, buyer_id.clone(), data.price);
+            //  self.payment(owner.clone(), buyer_id.clone(), data.price);
         }
 
         let mut w_list = self.waiting_list.get(&owner.clone()).unwrap();
@@ -284,7 +287,19 @@ impl Function for Contract {
         true
     }
 
+
+    fn set_balance_of(&mut self, account_id: AccountId, new_balance: Balance) {
+        self.ft_per_account.insert(&account_id, &new_balance);
+    }
+
     //=====================GET FUNCTION=============================
+
+    fn get_balance_of(&self, account_id: AccountId) -> i32 {
+        if self.ft_per_account.contains_key(&account_id) {
+            return self.ft_per_account.get(&account_id).unwrap() as i32;
+        }
+        -1
+    }
 
     fn get_data_by_id(&self, data_id: ECID) -> Metadata {
         assert!(self.data_by_id.contains_key(&data_id), "data is not exist!");
@@ -312,7 +327,7 @@ impl Function for Contract {
     //all data which are bought by a user
     fn get_accessed_data_by_user(&self, user_id: AccountId) -> Vec<Metadata> {
         let mut vec_data = vec![];
-        let vec_data_id: Vec<ECID> = self.keys_by_account.get(&user_id).unwrap_or_else(|| vec![]);
+        let vec_data_id: Vec<ECID> = self.access_by_user.get(&user_id).unwrap_or_else(|| vec![]);
         for i in vec_data_id {
             let data = self.get_data_by_id(i);
             vec_data.push(data);
@@ -341,10 +356,9 @@ impl Function for Contract {
         vec_account
     }
 
-    fn get_data_value(&self, encrypted_cid: ECID) -> DataValue {
+    fn get_data_value(&self, encrypted_cid: ECID, user_id: AccountId) -> DataValue {
         let list_access = &self.access_by_data;
-        let singer = env::signer_account_id();
-        assert_eq!(list_access.get(&encrypted_cid).unwrap().user_id, singer.to_string(), "You dont have permision to get this data!");
+        assert_eq!(list_access.get(&encrypted_cid).unwrap().user_id, user_id.to_string(), "You dont have permision to get this data!");
         list_access.get(&encrypted_cid).unwrap()
     }
 
@@ -356,5 +370,17 @@ impl Function for Contract {
         }
         vec_result
     }
+
+    fn update_balance(&mut self, sender_id: &AccountId, receiver_id: &AccountId, amount: U128) {
+        if self.ft_per_account.contains_key(sender_id) {
+            self.ft_per_account.insert(sender_id, &(self.ft_per_account.get(sender_id).unwrap() - amount.0));
+        }
+
+        if self.ft_per_account.contains_key(receiver_id) {
+            self.ft_per_account.insert(receiver_id, &(self.ft_per_account.get(sender_id).unwrap() + amount.0));
+        }
+    }
+    
+
 
 }
