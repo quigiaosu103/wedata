@@ -96,6 +96,7 @@ pub trait Function {
     fn get_balance_of(&self, account_id: AccountId) -> i32;
     fn set_balance_of(&mut self, account_id: AccountId, new_balance: Balance);
     fn update_balance(&mut self, sender_id: &AccountId, receiver_id: &AccountId, amount: U128);
+    fn register(&mut self, account_id: AccountId);
 }
 
 #[ext_contract(ext_ft_contract)]
@@ -126,7 +127,9 @@ impl Function for Contract {
             ft_per_account: LookupMap::new(b"ft_per_account".try_to_vec().unwrap()),
         }
     }
-// chỗ này có vấn đề vì mình không biết cái CID
+    fn register(&mut self, account_id: AccountId) {
+        self.ft_per_account.insert(&account_id, &(0 as u128));
+    }
 
     fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID, size: String) -> Metadata {
         let owner = env::signer_account_id();
@@ -378,6 +381,8 @@ impl Function for Contract {
 
         if self.ft_per_account.contains_key(receiver_id) {
             self.ft_per_account.insert(receiver_id, &(self.ft_per_account.get(sender_id).unwrap() + amount.0));
+        } else {
+            self.ft_per_account.insert(receiver_id, &amount.0);
         }
     }
     
