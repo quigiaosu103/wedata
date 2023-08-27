@@ -93,7 +93,7 @@ pub trait Function {
     fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId, pub_key: String) -> Metadata;
     fn get_waiting_list(&self, owner: AccountId) -> Vec<(AccountId, ECID, String)>;
     fn cross_call(&self, contract_id: AccountId, sender: AccountId, receiver: AccountId, amount: Balance);
-    fn get_balance_of(&self, account_id: AccountId) -> i32;
+    fn get_balance_of(&self, account_id: AccountId) -> i128;
     fn set_balance_of(&mut self, account_id: AccountId, new_balance: Balance);
     fn update_balance(&mut self, sender_id: &AccountId, receiver_id: &AccountId, amount: U128);
     fn register(&mut self, account_id: AccountId);
@@ -108,6 +108,7 @@ trait ExtFtContract {
         amount: U128, 
         memo: Option<String>
     );
+    fn storage_deposit(account_id: AccountId);
 }
 
 #[near_bindgen]
@@ -129,6 +130,13 @@ impl Function for Contract {
     }
     fn register(&mut self, account_id: AccountId) {
         self.ft_per_account.insert(&account_id, &(0 as u128));
+        let contract_id: AccountId = "harvardtp_ft.testnet".parse().unwrap();
+        ext_ft_contract::ext(contract_id)
+        // Attach 1 yoctoNEAR with static GAS equal to the GAS for nft transfer. Also attach an unused GAS weight of 1 by default.
+        .with_attached_deposit(10_000_000_000_000_000_000_000)
+        .storage_deposit(
+            account_id
+        );
     }
 
     fn new_meta_data(&mut self, title_given: String, tags_given: String, cid_encrypted_given: ECID, size: String) -> Metadata {
@@ -180,8 +188,29 @@ impl Function for Contract {
 	
     fn update_data_share_address(&mut self,account_id: AccountId, cid: ECID) {
         let mut metadata = self.get_data_by_id(cid.clone());
-        metadata.push_shareaddress(account_id);
+        metadata.push_shareaddress(account_id.clone());
         self.data_by_id.insert(&cid, &metadata);
+        let data_list = &self.total_published;
+        let mut index:u32 = 0;
+        for i in 0..data_list.len() {
+            let data = data_list.get(&(i as u32)).unwrap_or(Metadata {
+                state: State::Private,
+                title: "".to_string(),
+                tags: "tags_given".to_string(),
+                owner: account_id.clone(),
+                cid_encrypted: "cid_encrypted_given".to_string(),
+                price: 0,
+                list_access: vec![],
+                size: "1".to_string(),
+                is_active: false,
+            });
+            if data.cid_encrypted == cid {
+                index = i as u32;
+                break;
+            }
+        }
+        self.total_published.insert(&index, &metadata);
+
     }
 
     fn update_total_publish(&mut self,account_id: AccountId) {
@@ -218,6 +247,8 @@ impl Function for Contract {
     fn purchase(&mut self, encrypted_cid: ECID, pub_key: String, contract_id: AccountId)-> Metadata {
         let data = self.data_by_id.get(&encrypted_cid).unwrap();
         let buyer_id = env::signer_account_id();
+        let buyer_balance = self.get_balance_of(buyer_id.clone());
+        assert!(data.price <= buyer_balance as u128, "You dont have enough coin!");
         assert_ne!(buyer_id, data.owner, "You are owner of this data!");
         self.cross_call(contract_id.clone(), buyer_id.clone(), contract_id, data.price * ONE_NEAR);
         self.store_waiting_list(buyer_id.clone(), data, pub_key.clone());
@@ -234,21 +265,22 @@ impl Function for Contract {
             receiver, //seller to transfer the FTs to
             U128(amount), //amount to transfer
             Some("Sale from marketplace".to_string()), //memo (to include some context)
-        );
+        );    
     }
 
     fn confirm_transaction(&mut self, buyer_id: AccountId, encrypted_cid: ECID, is_access: bool, access_key: String, contract_id: AccountId, pub_key: String) -> Metadata {
         let data = self.get_data_by_id(encrypted_cid.clone());
         let owner = data.owner;
+        
         if is_access {
             
             // self.payment(buyer_id.clone(), owner.clone(), data.price);
-            self.cross_call(contract_id.clone(), contract_id, owner.clone(), data.price);
+            self.cross_call(contract_id.clone(), contract_id, owner.clone(), data.price * ONE_NEAR);
             self.access_to_data(encrypted_cid.clone(), buyer_id.clone(), access_key, pub_key);
             self.data_unconfirmed.remove(&encrypted_cid);
 
         } else {
-            self.cross_call(contract_id.clone(), contract_id, buyer_id.clone(), data.price);
+            self.cross_call(contract_id.clone(), contract_id, buyer_id.clone(), data.price * ONE_NEAR);
             //  self.payment(owner.clone(), buyer_id.clone(), data.price);
         }
 
@@ -297,9 +329,9 @@ impl Function for Contract {
 
     //=====================GET FUNCTION=============================
 
-    fn get_balance_of(&self, account_id: AccountId) -> i32 {
+    fn get_balance_of(&self, account_id: AccountId) -> i128 {
         if self.ft_per_account.contains_key(&account_id) {
-            return self.ft_per_account.get(&account_id).unwrap() as i32;
+            return self.ft_per_account.get(&account_id).unwrap() as i128;
         }
         -1
     }
@@ -376,14 +408,26 @@ impl Function for Contract {
 
     fn update_balance(&mut self, sender_id: &AccountId, receiver_id: &AccountId, amount: U128) {
         if self.ft_per_account.contains_key(sender_id) {
-            self.ft_per_account.insert(sender_id, &(self.ft_per_account.get(sender_id).unwrap() - amount.0));
+            self.ft_per_account.insert(sender_id, &(self.ft_per_account.get(sender_id).unwrap_or(0) - amount.0));
         }
 
         if self.ft_per_account.contains_key(receiver_id) {
-            self.ft_per_account.insert(receiver_id, &(self.ft_per_account.get(sender_id).unwrap() + amount.0));
+            self.ft_per_account.insert(receiver_id, &(self.ft_per_account.get(sender_id).unwrap_or(0) + amount.0));
         } else {
             self.ft_per_account.insert(receiver_id, &amount.0);
         }
+
+        let payment_info = EventLog { //info of transaction
+            standard: "e-comerce-1.0.0".to_string(),
+            event: EventLogVariant::Purchase(vec![PurchaseProduct {
+                receiver: receiver_id.to_string(),
+                sender: sender_id.to_string(),
+                amount: amount.0,
+                memo: None,
+            }])
+        };
+        //add new checker into checkers of this campaign
+        env::log_str(&payment_info.to_string());   
     }
     
 
