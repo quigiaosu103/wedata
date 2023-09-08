@@ -25,12 +25,14 @@ pub enum Permision {
   OnlyView
 }
 
+
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone,PartialEq, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Contributor {
   pub account_id: AccountId,
   pub role: String,
-  pub permision: Permision
+  pub permision: Permision, 
+  pub description: String,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone)]
@@ -127,7 +129,8 @@ impl Contract {
     project.contributors.push(Contributor {
       account_id: user_id,
       role,
-      permision
+      permision,
+      description:"".to_string()
     });
     self.update_projects(project.clone());
     project
@@ -189,5 +192,3 @@ impl Contract {
   }
 
 }
-
-he account ID is invalid", line: 1
