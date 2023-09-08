@@ -1,0 +1,1 @@
+/root/WeData/W2/wedata/contract/storage-market/target/wasm32-unknown-unknown/release/nft_simple.wasm: /root/WeData/W2/wedata/contract/storage-market/src/event.rs /root/WeData/W2/wedata/contract/storage-market/src/lib.rs
