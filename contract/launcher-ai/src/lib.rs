@@ -48,6 +48,12 @@ pub struct ProjectPool {
   pub urls: Vec<String>
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct FeedBack {
+  account_id: AccountId,
+  content: String
+}
 
 // Define the contract structure
 #[near_bindgen]
@@ -57,7 +63,8 @@ pub struct Contract {
     total_projects: u64,
     projects: UnorderedMap<u64, ProjectPool>,
     project_by_id: LookupMap<String, ProjectPool>,
-    projects_by_user: LookupMap<AccountId, Vec<String>>
+    projects_by_user: LookupMap<AccountId, Vec<String>>,
+    feedbacks_by_project: LookupMap<String, Vec<FeedBack>>
 }
 
 
@@ -72,6 +79,7 @@ impl Contract {
       projects: UnorderedMap::new(b"projects".try_to_vec().unwrap()),
       project_by_id: LookupMap::new(b"project by id".try_to_vec().unwrap()),
       projects_by_user: LookupMap::new(b"projects by user".try_to_vec().unwrap()),
+      feedbacks_by_project: LookupMap::new(b"feedbacks by project".try_to_vec().unwrap()),
     }
   }
 
@@ -88,7 +96,7 @@ impl Contract {
       contributors: vec_roles,
       urls
     };
-    assert!(self.project_by_id.contains_key(&id), "project id is already exist!");
+    assert!(!self.project_by_id.contains_key(&id), "project id is already exist!");
     self.project_by_id.insert(&id, &project);
     self.projects.insert(&self.projects.len(), &project);
     if self.projects_by_user.contains_key(&owner) {
@@ -98,12 +106,36 @@ impl Contract {
 
     }else {
       let mut vec: Vec<String> = vec![];
-      vec.push(id);
+      vec.push(id.clone());
       self.projects_by_user.insert(&owner, &vec);
     }
+    let vec: Vec<FeedBack> = vec![];
+    self.feedbacks_by_project.insert(&id, &vec);
     project
   }
 
+  pub fn new_feedback(&mut self, project_id: String, account_id: AccountId, content: String) -> FeedBack {
+    let feedback = FeedBack {
+      account_id,
+      content
+    };
+    let mut feedbacks = self.feedbacks_by_project.get(&project_id).unwrap();
+    feedbacks.push(feedback.clone());
+    self.feedbacks_by_project.insert(&project_id, &feedbacks);  
+    feedback  
+  }
+
+  pub fn get_feedbacks_by_project(&self, project_id: String) -> Vec<FeedBack> {
+    let vec_fbs = self.feedbacks_by_project.get(&project_id).unwrap();
+    vec_fbs
+  }
+
+
+  pub fn get_project_by_id(&self, id: String) -> ProjectPool{
+    assert!(self.project_by_id.contains_key(&id), "id is invalid");
+    let prj = self.project_by_id.get(&id).unwrap();  
+    prj
+  }
 
   //thay đổi trạng thái proj
   pub fn set_status(&mut self, project_id: String, status: Status) -> ProjectPool {
