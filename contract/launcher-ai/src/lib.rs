@@ -40,6 +40,8 @@ pub struct Contributor {
 pub struct RequestContributeInfo {
   pub account_id: AccountId,
   pub role: String,
+  pub project_title: String,
+  pub project_id: String
 }
 
 
@@ -151,7 +153,7 @@ impl Contract {
 
   pub fn get_request_by_owner(&self, account_id: AccountId) -> Vec<RequestContributeInfo> {
     let mut vec: Vec<RequestContributeInfo> = vec![];
-    let list_request = self.request_by_owner.get(&account_id).unwrap();
+    let list_request = self.request_by_owner.get(&account_id).unwrap_or_else(|| vec![]);
     for i in list_request {
       vec.push(i);
     } 
@@ -210,7 +212,11 @@ impl Contract {
         }
         index+=1;
     }
-    project.contributors.insert(index, Contributor { account_id: user_id, role: new_ctr.role, permision: new_ctr.permision, description: new_ctr.description });
+    if index>0 {
+      index-=1;
+    }
+    project.contributors.remove(index as usize);
+    project.contributors.push(Contributor { account_id: user_id, role: new_ctr.role, permision: new_ctr.permision, description: new_ctr.description });
     self.update_projects(project.clone());
     project
   }
@@ -219,11 +225,11 @@ impl Contract {
     let prj = self.project_by_id.get(&prj_id).unwrap();
     if self.request_by_owner.contains_key(&prj.owner) {
       let mut vec = self.request_by_owner.get(&prj.owner).unwrap();
-      vec.push(RequestContributeInfo { account_id: env::signer_account_id(), role});
+      vec.push(RequestContributeInfo { account_id: env::signer_account_id(), role, project_id: prj_id.clone(), project_title: prj.title});
       self.request_by_owner.insert(&prj.owner, &vec);
     }else {
       let mut vec : Vec<RequestContributeInfo> = vec![];
-      vec.push(RequestContributeInfo { account_id: env::signer_account_id(), role});
+      vec.push(RequestContributeInfo { account_id: env::signer_account_id(), role, project_id: prj_id, project_title: prj.title});
       self.request_by_owner.insert(&prj.owner, &vec);
     }
   }
@@ -235,13 +241,18 @@ impl Contract {
       self.accept_contribute(prj_id, user_id.to_string(), role.clone());
     }
     let mut vec = self.request_by_owner.get(&project.owner).unwrap();
-    let index = 0;
+    let mut index = 0;
       for i in vec.clone() {
         if i.account_id == user_id  && role == i.role {
           break;
         }
+        index+=1;
+      }
+      if index >0 {
+        index-=1;
       }
       vec.remove(index);
+      self.request_by_owner.insert(&project.owner, &vec);
   }
 
   
