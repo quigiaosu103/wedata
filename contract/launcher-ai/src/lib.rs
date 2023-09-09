@@ -74,6 +74,7 @@ impl Contract {
     }
   }
 
+  //tạo project
   pub fn new_project(&mut self, id: String, title: String, description: String, pool: Balance, vec_roles: Vec<Contributor>) -> ProjectPool {
     let owner = env::signer_account_id();
     let project = ProjectPool {
@@ -101,6 +102,8 @@ impl Contract {
     project
   }
 
+
+  //thay đổi trạng thái proj
   pub fn set_status(&mut self, project_id: String, status: Status) -> ProjectPool {
     assert!(self.project_by_id.contains_key(&project_id), "project id is invalid!");
     let mut project = self.project_by_id.get(&project_id).unwrap();
@@ -123,10 +126,19 @@ impl Contract {
     }
   }
 
+
+  
   pub fn contribute(&mut self, project_id: String, user_id: String, role: String, permision: Permision) -> ProjectPool {
     assert!(self.project_by_id.contains_key(&project_id), "Project id is not valid");
     let mut project = self.project_by_id.get(&project_id).unwrap();
-    project.contributors.push(Contributor {
+    let mut index =0;
+    for i in project.clone().contributors {
+        if i.role == role {
+          break;
+        }
+        index+=1;
+    }
+    project.contributors.insert(index, Contributor {
       account_id: user_id,
       role,
       permision,
