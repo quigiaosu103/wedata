@@ -44,7 +44,8 @@ pub struct ProjectPool {
   pub pool: Balance,
   pub staus: Status, // description
   pub owner: AccountId,
-  pub contributors: Vec<Contributor>
+  pub contributors: Vec<Contributor>,
+  pub urls: Vec<String>
 }
 
 
@@ -75,7 +76,7 @@ impl Contract {
   }
 
   //tạo project
-  pub fn new_project(&mut self, id: String, title: String, description: String, pool: Balance, vec_roles: Vec<Contributor>) -> ProjectPool {
+  pub fn new_project(&mut self, id: String, title: String, description: String, pool: Balance, vec_roles: Vec<Contributor>, urls: Vec<String>) -> ProjectPool {
     let owner = env::signer_account_id();
     let project = ProjectPool {
       id: id.clone(),
@@ -85,6 +86,7 @@ impl Contract {
       staus: Status::Init,
       owner: owner.clone(),
       contributors: vec_roles,
+      urls
     };
     assert!(self.project_by_id.contains_key(&id), "project id is already exist!");
     self.project_by_id.insert(&id, &project);
@@ -127,7 +129,7 @@ impl Contract {
   }
 
 
-  
+
   pub fn contribute(&mut self, project_id: String, user_id: String, role: String, permision: Permision) -> ProjectPool {
     assert!(self.project_by_id.contains_key(&project_id), "Project id is not valid");
     let mut project = self.project_by_id.get(&project_id).unwrap();
