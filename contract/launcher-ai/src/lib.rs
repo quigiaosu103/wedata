@@ -35,6 +35,15 @@ pub struct Contributor {
   pub description: String,
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone,PartialEq, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct RequestContributeInfo {
+  pub account_id: AccountId,
+  pub role: String,
+}
+
+
+
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct ProjectPool {
@@ -64,7 +73,8 @@ pub struct Contract {
     projects: UnorderedMap<u64, ProjectPool>,
     project_by_id: LookupMap<String, ProjectPool>,
     projects_by_user: LookupMap<AccountId, Vec<String>>,
-    feedbacks_by_project: LookupMap<String, Vec<FeedBack>>
+    feedbacks_by_project: LookupMap<String, Vec<FeedBack>>,
+    request_by_owner: LookupMap<AccountId, Vec<RequestContributeInfo>>
 }
 
 
@@ -80,6 +90,7 @@ impl Contract {
       project_by_id: LookupMap::new(b"project by id".try_to_vec().unwrap()),
       projects_by_user: LookupMap::new(b"projects by user".try_to_vec().unwrap()),
       feedbacks_by_project: LookupMap::new(b"feedbacks by project".try_to_vec().unwrap()),
+      request_by_owner: LookupMap::new(b" by project".try_to_vec().unwrap()),
     }
   }
 
@@ -137,6 +148,25 @@ impl Contract {
     prj
   }
 
+
+  pub fn get_request_by_owner(&self, account_id: AccountId) -> Vec<RequestContributeInfo> {
+    let mut vec: Vec<RequestContributeInfo> = vec![];
+    let list_request = self.request_by_owner.get(&account_id).unwrap();
+    for i in list_request {
+      vec.push(i);
+    } 
+    vec
+  }
+
+  pub fn get_feedbacks(&self, prj_id: String) -> Vec<FeedBack>  {
+    let mut vec: Vec<FeedBack> = vec![];
+    let list_feedbacks = self.feedbacks_by_project.get(&prj_id).unwrap();
+    for i in list_feedbacks {
+      vec.push(i);
+    }
+    vec
+  }
+
   //thay đổi trạng thái proj
   pub fn set_status(&mut self, project_id: String, status: Status) -> ProjectPool {
     assert!(self.project_by_id.contains_key(&project_id), "project id is invalid!");
@@ -162,25 +192,59 @@ impl Contract {
 
 
 
-  pub fn contribute(&mut self, project_id: String, user_id: String, role: String, permision: Permision) -> ProjectPool {
+  pub fn accept_contribute(&mut self, project_id: String, user_id: String, role: String) -> ProjectPool {
     assert!(self.project_by_id.contains_key(&project_id), "Project id is not valid");
     let mut project = self.project_by_id.get(&project_id).unwrap();
     let mut index =0;
-    for i in project.clone().contributors {
+    let contributors = project.clone().contributors;
+    let mut new_ctr = Contributor {
+      account_id: "".to_string(),
+      role: "".to_string(),
+      permision: Permision::FullAccess,
+      description:"".to_string()
+    };
+    for i in  contributors{
         if i.role == role {
+          new_ctr=i;
           break;
         }
         index+=1;
     }
-    project.contributors.insert(index, Contributor {
-      account_id: user_id,
-      role,
-      permision,
-      description:"".to_string()
-    });
+    project.contributors.insert(index, Contributor { account_id: user_id, role: new_ctr.role, permision: new_ctr.permision, description: new_ctr.description });
     self.update_projects(project.clone());
     project
   }
+
+  pub fn request_contribute(&mut self, prj_id: String, role: String) {
+    let prj = self.project_by_id.get(&prj_id).unwrap();
+    if self.request_by_owner.contains_key(&prj.owner) {
+      let mut vec = self.request_by_owner.get(&prj.owner).unwrap();
+      vec.push(RequestContributeInfo { account_id: env::signer_account_id(), role});
+      self.request_by_owner.insert(&prj.owner, &vec);
+    }else {
+      let mut vec : Vec<RequestContributeInfo> = vec![];
+      vec.push(RequestContributeInfo { account_id: env::signer_account_id(), role});
+      self.request_by_owner.insert(&prj.owner, &vec);
+    }
+  }
+
+  pub fn excute_request(&mut self, prj_id: String, user_id:AccountId, role: String, is_accept: bool) {
+    let project = self.project_by_id.get(&prj_id).unwrap();
+    assert_eq!(project.owner, env::signer_account_id(), "you do not have permission to excute request!");
+    if is_accept {
+      self.accept_contribute(prj_id, user_id.to_string(), role.clone());
+    }
+    let mut vec = self.request_by_owner.get(&project.owner).unwrap();
+    let index = 0;
+      for i in vec.clone() {
+        if i.account_id == user_id  && role == i.role {
+          break;
+        }
+      }
+      vec.remove(index);
+  }
+
+  
 
   //=========================================get functions===================================
   pub fn get_all_projects(&self) -> Vec<ProjectPool> {

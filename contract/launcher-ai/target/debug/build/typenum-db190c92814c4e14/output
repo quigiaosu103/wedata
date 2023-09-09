@@ -1,0 +1,2 @@
+cargo:rustc-env=TYPENUM_BUILD_CONSTS=/root/WeData/W2/wedata/contract/launcher-ai/target/debug/build/typenum-db190c92814c4e14/out/consts.rs
+cargo:rustc-env=TYPENUM_BUILD_OP=/root/WeData/W2/wedata/contract/launcher-ai/target/debug/build/typenum-db190c92814c4e14/out/op.rs
