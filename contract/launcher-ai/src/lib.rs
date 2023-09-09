@@ -29,7 +29,7 @@ pub enum Permision {
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Clone,PartialEq, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Contributor {
-  pub account_id: AccountId,
+  pub account_id: String,
   pub role: String,
   pub permision: Permision, 
   pub description: String,
@@ -74,7 +74,7 @@ impl Contract {
     }
   }
 
-  pub fn new_project(&mut self, id: String, title: String, description: String, pool: Balance) -> ProjectPool {
+  pub fn new_project(&mut self, id: String, title: String, description: String, pool: Balance, vec_roles: Vec<Contributor>) -> ProjectPool {
     let owner = env::signer_account_id();
     let project = ProjectPool {
       id: id.clone(),
@@ -83,7 +83,7 @@ impl Contract {
       pool,
       staus: Status::Init,
       owner: owner.clone(),
-      contributors: vec![],
+      contributors: vec_roles,
     };
     assert!(self.project_by_id.contains_key(&id), "project id is already exist!");
     self.project_by_id.insert(&id, &project);
@@ -123,7 +123,7 @@ impl Contract {
     }
   }
 
-  pub fn contribute(&mut self, project_id: String, user_id: AccountId, role: String, permision: Permision) -> ProjectPool {
+  pub fn contribute(&mut self, project_id: String, user_id: String, role: String, permision: Permision) -> ProjectPool {
     assert!(self.project_by_id.contains_key(&project_id), "Project id is not valid");
     let mut project = self.project_by_id.get(&project_id).unwrap();
     project.contributors.push(Contributor {
@@ -158,7 +158,7 @@ impl Contract {
     vec_prjs
   }
 
-  pub fn set_role(&self, project_id: String, account_id: AccountId, role: Option<String>, permision: Option<Permision>) ->  ProjectPool {
+  pub fn set_role(&self, project_id: String, account_id: String, role: Option<String>, permision: Option<Permision>) ->  ProjectPool {
     assert!(self.project_by_id.contains_key(&project_id), "project id is not valid!");
     let project = self.project_by_id.get(&project_id).unwrap();
     let mut contributors_list = project.clone().contributors;
@@ -192,3 +192,4 @@ impl Contract {
   }
 
 }
+
